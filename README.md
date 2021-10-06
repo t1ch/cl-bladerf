@@ -5,7 +5,7 @@ This is a Common Lisp CFFI library binding for Nuand's libbladeRF
 
 ## License
 
-This file is part of the bladeRF project:
+This file is part of the cl-bladeRF project:
     http://www.github.com/t1ch/cl-bladerf
  
   This library is free software; you can redistribute it and/or
