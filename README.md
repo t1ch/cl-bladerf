@@ -1,6 +1,4 @@
 # cl-bladerf
-### _Tichaona Kadzinga <tichaona@kadzinga.com>_
-
 This is a Common Lisp CFFI library binding for Nuand's libbladeRF
 
 ## License
@@ -24,6 +22,6 @@ This file is part of the cl-bladeRF project:
  
 
 
-Copyright (c) 2021 Tichaona Kadzinga <tichaona@kadzinga.com>
+Copyright (c) 2021 Tichaona Kadzinga
 
 
