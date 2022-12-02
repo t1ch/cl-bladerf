@@ -5,7 +5,7 @@
 (in-package #:cl-bladerf)
 
 (define-foreign-library libbladerf
-    (:unix (:or "libbladeRF.so.2" "libbladeRF.so"))  
+    (:unix (:or "libbladeRF.so.2" "libbladeRF.so" "libbladeRF.2.dylib" "libbladeRF.dylib"))
     (t (:default "libbladeRF")))
 
 (use-foreign-library libbladerf)
@@ -154,7 +154,7 @@
     (foreign-free serial-struct)
     serial))
 
-;;;; TODO 
+;;;; TODO
 (defun get-serial-struct-2 (device)
   (with-foreign-object (serial-struct :pointer)
     (let ((status (bladerf_get_serial_struct (mem-ref device :pointer) serial-struct)))
@@ -173,7 +173,7 @@
       (if (< status 0)
 	  (error "Failed to get on-board FPGA size")
 	  (mem-aref size :int)))))
-  
+
 (defcfun ("bladerf_get_flash_size" bladerf_get_flash_size) :int
   (dev :pointer)
   (size (:pointer :uint32))
@@ -201,7 +201,7 @@
 	  (error "Failed to get on-board flash")
 	  (with-foreign-slots ((describe) version (:struct bladerf_version))
 	    describe)))))
-	  
+
 (defcfun ("bladerf_is_fpga_configured" bladerf_is_fpga_configured) :int
   (dev :pointer))
 
@@ -304,7 +304,7 @@
 ;; eg (set-gain *dev* (channel-rx 0) 30)
 ;; On receive channels, 60 dB is the maximum gain level
 
-(defun set-gain (device channel gain)  
+(defun set-gain (device channel gain)
   (let ((status (bladerf_set_gain (mem-ref device :pointer) channel gain)))
     (if (< status 0)
 	(error "Failed to set gain error: ~S " status)
@@ -322,7 +322,7 @@
       (if (< status 0)
 	  (error "Failed to get gain")
 	  (mem-ref gain :int)))))
-      
+
 (defcfun ("bladerf_set_gain_mode" bladerf_set_gain_mode) :int
   (dev :pointer)
   (ch :int)
@@ -350,7 +350,7 @@
   (ch :int)
   (modes :pointer))
 
-;;Get available gain control modes 
+;;Get available gain control modes
 (defun get-gain-modes (device channel)
   (with-foreign-object (modes :pointer)
     (let ((number-of-modes (bladerf_get_gain_modes (mem-ref device :pointer) channel modes)))
@@ -390,7 +390,7 @@
       (if (< status 0)
 	  (error "Failed to set gain for specific gain stage ~S" status)
 	  t))))
-    
+
 
 (defcfun ("bladerf_get_gain_stage" bladerf_get_gain_stage) :int
   (dev :pointer)
@@ -561,7 +561,7 @@
       (if (< status 0)
 	  (error "Failed to get supported range of bandwidths for channel: ~S error: ~S" channel status)
 	  (mem-aref range '(:struct bladerf_range))))))
-			      
+
 (defcfun ("bladerf_select_band" bladerf_select_band) :int
   (dev :pointer)
   (ch :int)
@@ -660,7 +660,7 @@
 ;;Test if a given loopback mode is supported on this device.
 (defun is-loopback-mode-supported-p (device mode)
   (bladerf_is_loopback_mode_supported (mem-ref device :pointer) mode))
-    
+
 
 (defcfun ("bladerf_set_loopback" bladerf_set_loopback) :int
   (dev :pointer)
@@ -839,7 +839,7 @@
     (if (< status 0)
 	(error "Failed to set the value of configuration parameter error: ~S" status)
 	(= status 0))))
-	
+
 (defcfun ("bladerf_get_correction" bladerf_get_correction) :int
   (dev :pointer)
   (ch :int)
@@ -855,7 +855,7 @@
 	  (mem-aref value :uint16)))))
 
 (defun minimum-buffer-size (number-of-samples number-of-channels)
-  (* 2 number-of-samples number-of-channels (foreign-type-size :int16))) 
+  (* 2 number-of-samples number-of-channels (foreign-type-size :int16)))
 
 (defun buffer-length (number-of-samples number-of-channels)
   (* 2 number-of-samples number-of-channels))
@@ -1000,7 +1000,7 @@
 	    (progn
 	      (loop for i below samples-to-allocate by 2
 		 do
-		   (vector-push  
+		   (vector-push
 		    (complex
 		     (mem-aref rx-samples :int16 (1+ i))
 		     (mem-aref rx-samples :int16 i))
@@ -1020,7 +1020,7 @@
 	    (progn
 	      (loop for i below samples-to-allocate by 2
 		 do
-		   (vector-push  
+		   (vector-push
 		    (complex
 		     (coerce (mem-aref rx-samples :int16 (1+ i)) 'double-float)
 		     (coerce (mem-aref rx-samples :int16 i) 'double-float))
