@@ -9,12 +9,14 @@
     (t (:default "libbladeRF")))
 
 (use-foreign-library libbladerf)
-;; This is an opaque structure
 
+;; This is an opaque structure
 (defcstruct (bladerf-device))
 
-(defconstant LIBBLADERF_API_VERSION #x02000200)
+;; API Version constant
+(defconstant LIBBLADERF_API_VERSION #x02050000)
 
+;; Backend types
 (defcenum bladerf_backend
 	:BLADERF_BACKEND_ANY
 	:BLADERF_BACKEND_LINUX
@@ -23,9 +25,9 @@
 	(:BLADERF_BACKEND_DUMMY #.100))
 
 (defconstant BLADERF_DESCRIPTION_LENGTH 33)
-
 (defconstant BLADERF_SERIAL_LENGTH 33)
 
+;; Device info structure
 (defcstruct bladerf_devinfo
 	(backend bladerf_backend)
 	(serial :char :count 33)
@@ -35,6 +37,14 @@
 	(manufacturer :char :count 33)
 	(product :char :count 33))
 
+;; Backend info structure
+(defcstruct bladerf_backendinfo
+	(handle_count :int)
+	(handle :pointer)
+	(lock_count :int)
+	(lock :pointer))
+
+;; Core device functions
 (defcfun ("bladerf_open" bladerf_open) :int
   (device :pointer)
   (device_identifier :pointer))
@@ -62,15 +72,19 @@
   (dev :pointer)
   (info :pointer))
 
+(defcfun ("bladerf_get_backendinfo" bladerf_get_backendinfo) :int
+  (dev :pointer)
+  (info :pointer))
+
 (defcfun ("bladerf_get_devinfo_from_str" bladerf_get_devinfo_from_str) :int
   (devstr :string)
   (info :pointer))
 
-(defcfun ("bladerf_devinfo_matches" bladerf_devinfo_matches) :pointer
+(defcfun ("bladerf_devinfo_matches" bladerf_devinfo_matches) :boolean
   (a :pointer)
   (b :pointer))
 
-(defcfun ("bladerf_devstr_matches" bladerf_devstr_matches) :pointer
+(defcfun ("bladerf_devstr_matches" bladerf_devstr_matches) :boolean
   (dev_str :string)
   (info :pointer))
 
@@ -81,13 +95,12 @@
   (enabled :boolean))
 
 (defun bladerf-open-device (ptr->device &optional (device-identifier ""))
-  (bladerf_set_usb_reset_on_open 1)
+  (bladerf_set_usb_reset_on_open t)
   (with-foreign-string (cdevice-identifier device-identifier)
     (let ((status (bladerf_open ptr->device cdevice-identifier)))
       (if (< status 0)
 	  (error "Failed to open device error: ~S" status)
 	  (= status 0)))))
-
 
 (defmacro with-bladerf-device ((device-handle device-identifier) &body body)
   (let ((ptr->device-ptr (gensym "*dev*")))
@@ -102,90 +115,87 @@
 		 (bladerf_close ,device-handle)
 		 (foreign-free ,ptr->device-ptr))))))))
 
-
+;; Range structure
 (defcstruct bladerf_range
   (min :int64)
   (max :int64)
   (step :int64)
   (scale :float))
 
+;; Serial structure
 (defcstruct bladerf_serial
   (serial :char :count 33))
 
+;; Version structure
 (defcstruct bladerf_version
   (major :uint16)
   (minor :uint16)
   (patch :uint16)
   (describe :string))
 
+;; FPGA size enum
 (defcenum bladerf_fpga_size
 	(:BLADERF_FPGA_UNKNOWN #.0)
 	(:BLADERF_FPGA_40KLE #.40)
 	(:BLADERF_FPGA_115KLE #.115)
 	(:BLADERF_FPGA_A4 #.49)
+	(:BLADERF_FPGA_A5 #.77)
 	(:BLADERF_FPGA_A9 #.301))
 
+;; Device speed enum
 (defcenum bladerf_dev_speed
 	:BLADERF_DEVICE_SPEED_UNKNOWN
 	:BLADERF_DEVICE_SPEED_HIGH
 	:BLADERF_DEVICE_SPEED_SUPER)
 
+;; FPGA source enum
 (defcenum bladerf_fpga_source
 	(:BLADERF_FPGA_SOURCE_UNKNOWN #.0)
 	(:BLADERF_FPGA_SOURCE_FLASH #.1)
 	(:BLADERF_FPGA_SOURCE_HOST #.2))
 
-;;deprecated New code should use bladerf_get_serial_struct instead.
-;(defcfun ("bladerf_get_serial" bladerf_get_serial) :int
-;  (dev :pointer)
-;  (serial :string))
+;; Device info functions
+(defcfun ("bladerf_get_serial" bladerf_get_serial) :int
+  (dev :pointer)
+  (serial :string))
 
 (defcfun ("bladerf_get_serial_struct" bladerf_get_serial_struct) :int
   (dev :pointer)
-  (serial (:pointer (:struct bladerf_serial))))
+  (serial :pointer))
 
 (defun get-serial-struct (device)
-  (let* ((serial-struct (foreign-alloc :pointer))
-	 (status (bladerf_get_serial_struct (mem-ref device :pointer) (mem-ref serial-struct '(:pointer (:struct bladerf_serial)))))
-	 (serial ""))
-    (if (< status 0)
-	(error "An error occured while trying to get serial number")
-	(setf serial (foreign-string-to-lisp  (mem-aref serial-struct '(:pointer (:struct bladerf_serial))))))
-    (foreign-free serial-struct)
-    serial))
-
-;;;; TODO
-(defun get-serial-struct-2 (device)
-  (with-foreign-object (serial-struct :pointer)
-    (let ((status (bladerf_get_serial_struct (mem-ref device :pointer) serial-struct)))
+  (with-foreign-object (serial '(:struct bladerf_serial))
+    (let ((status (bladerf_get_serial_struct (mem-ref device :pointer) serial)))
       (if (< status 0)
 	  (error "Failed to get serial number error: ~S" status)
-	  (foreign-string-to-lisp  (mem-aref serial-struct '(:pointer (:struct bladerf_serial))))))))
+	  (foreign-string-to-lisp (foreign-slot-pointer serial '(:struct bladerf_serial) 'serial))))))
 
 (defcfun ("bladerf_get_fpga_size" bladerf_get_fpga_size) :int
   (dev :pointer)
-  (size (:pointer bladerf_fpga_size)))
+  (size :pointer))
 
-;;Query a device's FPGA size
 (defun get-fpga-size (ptr->device)
-  (with-foreign-object (size '(:pointer bladerf_fpga_size))
+  (with-foreign-object (size 'bladerf_fpga_size)
     (let ((status (bladerf_get_fpga_size (mem-ref ptr->device :pointer) size)))
       (if (< status 0)
 	  (error "Failed to get on-board FPGA size")
-	  (mem-aref size :int)))))
+	  (mem-ref size 'bladerf_fpga_size)))))
+
+(defcfun ("bladerf_get_fpga_bytes" bladerf_get_fpga_bytes) :int
+  (dev :pointer)
+  (size :pointer))
 
 (defcfun ("bladerf_get_flash_size" bladerf_get_flash_size) :int
   (dev :pointer)
-  (size (:pointer :uint32))
-  (is_guess (:pointer :bool)))
+  (size :pointer)
+  (is_guess :pointer))
 
-;;Query a device's Flash size
 (defun get-flash-size (device)
-  (with-foreign-objects ((size '(:pointer :uint32)) (is-guess '(:pointer :bool)))
+  (with-foreign-objects ((size :uint32) (is-guess :boolean))
     (let ((status (bladerf_get_flash_size (mem-ref device :pointer) size is-guess)))
       (if (< status 0)
 	  (error "Failed to get on-board flash")
-	  (if (mem-ref is-guess :bool)
+	  (if (mem-ref is-guess :boolean)
 	      (format t "The guessed flash size is ~a bytes" (mem-ref size :uint32))
 	      (format t "The flash size is ~a bytes" (mem-ref size :uint32)))))))
 
@@ -193,19 +203,17 @@
   (dev :pointer)
   (version :pointer))
 
-;;Query firmware version
 (defun get-firmware-version (device)
-  (with-foreign-object (version '(:pointer (:struct bladerf_version)))
+  (with-foreign-object (version '(:struct bladerf_version))
     (let ((status (bladerf_fw_version (mem-ref device :pointer) version)))
       (if (< status 0)
-	  (error "Failed to get on-board flash")
+	  (error "Failed to get firmware version")
 	  (with-foreign-slots ((describe) version (:struct bladerf_version))
 	    describe)))))
 
 (defcfun ("bladerf_is_fpga_configured" bladerf_is_fpga_configured) :int
   (dev :pointer))
 
-;;Check FPGA configuration status
 (defun fpga-configured-p (device)
   (let ((status (bladerf_is_fpga_configured (mem-ref device :pointer))))
     (case status
@@ -217,12 +225,11 @@
   (dev :pointer)
   (version :pointer))
 
-;;Query FPGA version
 (defun get-fpga-version (device)
-  (with-foreign-object (version '(:pointer (:struct bladerf_version)))
+  (with-foreign-object (version '(:struct bladerf_version))
     (let ((status (bladerf_fpga_version (mem-ref device :pointer) version)))
       (if (< status 0)
-	  (error "Failed to get on-board flash")
+	  (error "Failed to get FPGA version")
 	  (with-foreign-slots ((describe) version (:struct bladerf_version))
 	    describe)))))
 
@@ -230,36 +237,29 @@
   (dev :pointer)
   (source :pointer))
 
-;;Query FPGA configuration source
-;;Determine whether the FPGA image was loaded from flash, or if it was
-;;loaded from the host, by asking the firmware for the last-known FPGA
-;;configuration source.
 (defun get-fpga-source (device)
-  (with-foreign-object (source '(:pointer bladerf_fpga_source))
+  (with-foreign-object (source 'bladerf_fpga_source)
     (let ((status (bladerf_get_fpga_source (mem-ref device :pointer) source)))
       (if (< status 0)
-	  (error "Failed to get on-board FPGA size")
-	  (mem-aref source 'bladerf_fpga_source)))))
+	  (error "Failed to get FPGA source")
+	  (mem-ref source 'bladerf_fpga_source)))))
 
 (defcfun ("bladerf_device_speed" bladerf_device_speed) bladerf_dev_speed
   (dev :pointer))
 
-;;Obtain the bus speed at which the device is operating
 (defun get-device-speed (device)
   (bladerf_device_speed (mem-ref device :pointer)))
 
 (defcfun ("bladerf_get_board_name" bladerf_get_board_name) :string
   (dev :pointer))
 
-;;Get the board name
 (defun get-board-name (device)
   (bladerf_get_board_name (mem-ref device :pointer)))
 
-;; RX Channel Macro
+;; Channel macros and functions
 (defun channel-rx (channel)
   (logior (ash channel 1) #x0))
 
-;;TX Channel Macro
 (defun channel-tx (channel)
   (logior (ash channel 1) #x1))
 
@@ -279,10 +279,10 @@
   (dev :pointer)
   (dir bladerf_direction))
 
-;;Get the number of RX or TX channels supported by the given device
 (defun get-channel-count (device direction)
   (bladerf_get_channel_count (mem-ref device :pointer) direction))
 
+;; Gain control
 (defcenum bladerf_gain_mode
 	:BLADERF_GAIN_DEFAULT
 	:BLADERF_GAIN_MGC
@@ -299,11 +299,6 @@
   (ch :int)
   (gain :int))
 
-;;Set overall system gain
-;; Use channel-rx and channel-tx for channel
-;; eg (set-gain *dev* (channel-rx 0) 30)
-;; On receive channels, 60 dB is the maximum gain level
-
 (defun set-gain (device channel gain)
   (let ((status (bladerf_set_gain (mem-ref device :pointer) channel gain)))
     (if (< status 0)
@@ -315,9 +310,8 @@
   (ch :int)
   (gain :pointer))
 
-;; Get overall system gain
 (defun get-gain (device channel)
-  (with-foreign-object (gain :pointer)
+  (with-foreign-object (gain :int)
     (let ((status (bladerf_get_gain (mem-ref device :pointer) channel gain)))
       (if (< status 0)
 	  (error "Failed to get gain")
@@ -328,7 +322,6 @@
   (ch :int)
   (mode bladerf_gain_mode))
 
-;; Set gain control mode
 (defun set-gain-mode (device channel mode)
   (bladerf_set_gain_mode (mem-ref device :pointer) channel mode))
 
@@ -337,9 +330,8 @@
   (ch :int)
   (mode :pointer))
 
-;;Get gain control mode
 (defun get-gain-mode (device channel)
-  (with-foreign-object (mode :pointer)
+  (with-foreign-object (mode 'bladerf_gain_mode)
     (let ((status (bladerf_get_gain_mode (mem-ref device :pointer) channel mode)))
       (if (< status 0)
 	  (error "Failed to get gain control mode ~S" status)
@@ -350,7 +342,6 @@
   (ch :int)
   (modes :pointer))
 
-;;Get available gain control modes
 (defun get-gain-modes (device channel)
   (with-foreign-object (modes :pointer)
     (let ((number-of-modes (bladerf_get_gain_modes (mem-ref device :pointer) channel modes)))
@@ -361,21 +352,17 @@
 		 collecting
 		   (mem-aref (mem-ref modes :pointer) '(:struct bladerf_gain_modes) i)))))))
 
-
 (defcfun ("bladerf_get_gain_range" bladerf_get_gain_range) :int
   (dev :pointer)
   (ch :int)
   (range :pointer))
 
-;;Get range of overall system gain
-;;This may vary depending on the configured frequency, so it should be
-;;checked after setting the desired frequency.
 (defun get-gain-range (device channel)
   (with-foreign-object (range :pointer)
     (let ((status (bladerf_get_gain_range (mem-ref device :pointer) channel range)))
       (if (< status 0)
 	  (error "Failed to get range of system gain error: ~S" status)
-	  (mem-aref (mem-ref range :pointer) '(:struct bladerf_range))))))
+	  (mem-ref (mem-ref range :pointer) '(:struct bladerf_range))))))
 
 (defcfun ("bladerf_set_gain_stage" bladerf_set_gain_stage) :int
   (dev :pointer)
@@ -383,14 +370,11 @@
   (stage :string)
   (gain :int))
 
-;;Set the gain for a specific gain stage
 (defun set-gain-stage (device channel stage gain)
-  (with-foreign-string (cstage stage)
-    (let ((status (bladerf_set_gain_stage (mem-ref device :pointer) channel cstage gain)))
-      (if (< status 0)
-	  (error "Failed to set gain for specific gain stage ~S" status)
-	  t))))
-
+  (let ((status (bladerf_set_gain_stage (mem-ref device :pointer) channel stage gain)))
+    (if (< status 0)
+	(error "Failed to set gain for specific gain stage ~S" status)
+	t)))
 
 (defcfun ("bladerf_get_gain_stage" bladerf_get_gain_stage) :int
   (dev :pointer)
@@ -398,14 +382,12 @@
   (stage :string)
   (gain :pointer))
 
-;;Get the gain for a specific gain stage
 (defun get-gain-stage (device channel stage)
-  (with-foreign-string (cstage stage)
-    (with-foreign-object (gain :pointer)
-      (let ((status (bladerf_get_gain_stage (mem-ref device :pointer) channel cstage gain)))
-	(if (< status 0)
-	    (error "Failed to get gain for stage ~S error code: ~S" stage status)
-	    (mem-ref gain :int))))))
+  (with-foreign-object (gain :int)
+    (let ((status (bladerf_get_gain_stage (mem-ref device :pointer) channel stage gain)))
+      (if (< status 0)
+	  (error "Failed to get gain for stage ~S error code: ~S" stage status)
+	  (mem-ref gain :int)))))
 
 (defcfun ("bladerf_get_gain_stage_range" bladerf_get_gain_stage_range) :int
   (dev :pointer)
@@ -413,14 +395,12 @@
   (stage :string)
   (range :pointer))
 
-;;Get gain range of a specific gain stage
 (defun get-gain-stage-range (device channel stage)
-  (with-foreign-string (cstage stage)
-    (with-foreign-object (range :pointer)
-      (let ((status (bladerf_get_gain_stage_range (mem-ref device :pointer) channel cstage range)))
-	(if (< status 0)
-	    (error "Failed to get gain range of stage: ~S error: ~S" stage status)
-	    (mem-aref (mem-ref range :pointer) '(:struct bladerf_range)))))))
+  (with-foreign-object (range :pointer)
+    (let ((status (bladerf_get_gain_stage_range (mem-ref device :pointer) channel stage range)))
+      (if (< status 0)
+	  (error "Failed to get gain range of stage: ~S error: ~S" stage status)
+	  (mem-ref (mem-ref range :pointer) '(:struct bladerf_range))))))
 
 (defcfun ("bladerf_get_gain_stages" bladerf_get_gain_stages) :int
   (dev :pointer)
@@ -428,17 +408,16 @@
   (stages :pointer)
   (count :pointer))
 
-;;Get a list of available gain stages
 (defun get-gain-stages (device channel)
-  (with-foreign-objects ((stages :string) (count :pointer))
+  (with-foreign-objects ((stages :pointer) (count :uint))
     (let ((no-of-gain-stages (bladerf_get_gain_stages (mem-ref device :pointer) channel stages count)))
       (if (< no-of-gain-stages 0)
 	  (error "Failed to get list of available gain stages error: ~S" no-of-gain-stages)
 	  (loop for i from 0 to (1- no-of-gain-stages)
 	       collecting
-	       (mem-aref stages :string i))))))
+	       (mem-aref (mem-ref stages :pointer) :string i))))))
 
-
+;; Sample rate
 (defcstruct bladerf_rational_rate
   (integer :uint64)
   (num :uint64)
@@ -450,13 +429,12 @@
   (rate :unsigned-int)
   (actual :pointer))
 
-;; Configure the channel's sample rate to the specified rate in Hz.
 (defun set-sample-rate (device channel rate)
-  (with-foreign-object (actual :pointer)
+  (with-foreign-object (actual :unsigned-int)
     (let ((status (bladerf_set_sample_rate (mem-ref device :pointer) channel rate actual)))
       (if (< status 0)
 	  (error "Failed to set sample rate error: ~S " status)
-	  (mem-aref actual :uint)))))
+	  (mem-ref actual :unsigned-int)))))
 
 (defcfun ("bladerf_set_rational_sample_rate" bladerf_set_rational_sample_rate) :int
   (dev :pointer)
@@ -464,10 +442,9 @@
   (rate :pointer)
   (actual :pointer))
 
-;;Configure the channel's sample rate as a rational fraction of Hz.
 (defun set-rational-sample-rate (device channel int numerator denominator)
-  (with-foreign-objects ((rate    '(:pointer (:struct bladerf_rational_rate)))
-			 (actual  '(:pointer (:struct bladerf_rational_rate))))
+  (with-foreign-objects ((rate '(:struct bladerf_rational_rate))
+			 (actual '(:struct bladerf_rational_rate)))
     (setf (foreign-slot-value rate '(:struct bladerf_rational_rate) 'integer) int)
     (setf (foreign-slot-value rate '(:struct bladerf_rational_rate) 'num) numerator)
     (setf (foreign-slot-value rate '(:struct bladerf_rational_rate) 'den) denominator)
@@ -482,92 +459,82 @@
   (ch :int)
   (rate :pointer))
 
-;;Get the channel's current sample rate in Hz
-
 (defun get-sample-rate (device channel)
-  (with-foreign-object (rate :pointer)
+  (with-foreign-object (rate :unsigned-int)
     (let ((status (bladerf_get_sample_rate (mem-ref device :pointer) channel rate)))
       (if (< status 0)
 	  (error "Failed to get channel's current sample rate in Hz error: ~S" status)
-	  (with-foreign-slots ((integer num den) rate (:struct bladerf_rational_rate))
-	    (list :integer integer :numerator num :denominator den))))))
+	  (mem-ref rate :unsigned-int)))))
 
 (defcfun ("bladerf_get_sample_rate_range" bladerf_get_sample_rate_range) :int
   (dev :pointer)
   (ch :int)
   (range :pointer))
 
-;; Get the channel's supported range of sample rates
 (defun get-sample-rate-range (device channel)
-  (with-foreign-object (range '(:pointer (:struct bladerf_range)))
+  (with-foreign-object (range :pointer)
     (let ((status (bladerf_get_sample_rate_range (mem-ref device :pointer) channel range)))
       (if (< status 0)
 	  (error "Failed to get the channel's supported range of sample rates error: ~S" status)
-	  (mem-aref (mem-ref range :pointer) '(:struct bladerf_range))))))
+	  (mem-ref (mem-ref range :pointer) '(:struct bladerf_range))))))
 
 (defcfun ("bladerf_get_rational_sample_rate" bladerf_get_rational_sample_rate) :int
   (dev :pointer)
   (ch :int)
   (rate :pointer))
 
-;; Get the channel's sample rate in rational Hz
 (defun get-rational-sample-rate (device channel)
-  (with-foreign-object (rate '(:pointer (:struct bladerf_rational_rate)))
+  (with-foreign-object (rate '(:struct bladerf_rational_rate))
     (let ((status (bladerf_get_rational_sample_rate (mem-ref device :pointer) channel rate)))
       (if (< status 0)
 	  (error "Failed to get channel: ~S sample rate in rational Hz error ~S" channel status)
-	  (mem-aref rate '(:struct bladerf_rational_rate))))))
+	  (with-foreign-slots ((integer num den) rate (:struct bladerf_rational_rate))
+	    (list :integer integer :numerator num :denominator den))))))
 
+;; Bandwidth
 (defcfun ("bladerf_set_bandwidth" bladerf_set_bandwidth) :int
   (dev :pointer)
   (ch :int)
   (bandwidth :unsigned-int)
   (actual :pointer))
 
-;;This section defines functionality for configuring a channel's bandwidth. In
-;;most cases, one should define the bandwidth to be less than the sample rate
-;;to minimize the impact of aliasing.
-
-;;Set the bandwidth of the channel to the specified value in Hz
 (defun set-bandwidth (device channel bandwidth)
-  (with-foreign-object (actual '(:pointer :uint))
+  (with-foreign-object (actual :unsigned-int)
     (let ((status (bladerf_set_bandwidth (mem-ref device :pointer) channel bandwidth actual)))
       (if (< status 0)
 	  (error "Failed to set bandwidth of channel: ~S to ~S Hz" channel bandwidth)
-	  (mem-aref actual :uint)))))
+	  (mem-ref actual :unsigned-int)))))
 
 (defcfun ("bladerf_get_bandwidth" bladerf_get_bandwidth) :int
   (dev :pointer)
   (ch :int)
   (bandwidth :pointer))
 
-;;Get the bandwidth of the channel
 (defun get-bandwidth (device channel)
-  (with-foreign-object (bandwidth '(:pointer :uint))
+  (with-foreign-object (bandwidth :unsigned-int)
     (let ((status (bladerf_get_bandwidth (mem-ref device :pointer) channel bandwidth)))
       (if (< status 0)
 	  (error "Failed to get bandwidth of channel ~S error: ~S" channel status)
-	  (mem-aref bandwidth :uint)))))
+	  (mem-ref bandwidth :unsigned-int)))))
 
 (defcfun ("bladerf_get_bandwidth_range" bladerf_get_bandwidth_range) :int
   (dev :pointer)
   (ch :int)
-  (range (:pointer (:struct bladerf_range))))
+  (range :pointer))
 
-;;Get the supported range of bandwidths for a channel
 (defun get-bandwidth-range (device channel)
-  (with-foreign-object (range '(:pointer (:struct bladerf_range)))
+  (with-foreign-object (range :pointer)
     (let ((status (bladerf_get_bandwidth_range (mem-ref device :pointer) channel range)))
       (if (< status 0)
 	  (error "Failed to get supported range of bandwidths for channel: ~S error: ~S" channel status)
-	  (mem-aref range '(:struct bladerf_range))))))
+	  (mem-ref (mem-ref range :pointer) '(:struct bladerf_range))))))
 
+;; Frequency tuning
 (defcfun ("bladerf_select_band" bladerf_select_band) :int
   (dev :pointer)
   (ch :int)
   (frequency :uint64))
 
-;;Select the appropriate band path given a frequency in Hz.
 (defun select-band (device channel frequency)
   (let ((status (bladerf_select_band (mem-ref device :pointer) channel frequency)))
     (if (< status 0)
@@ -579,49 +546,37 @@
   (ch :int)
   (frequency :uint64))
 
-;;Set channel's frequency in Hz
-;;
-;;On the bladeRF1 platform, it is recommended to keep the RX and TX
-;;frequencies at least 1 MHz apart, and to digitally mix on the RX side
-;;if reception closer to the TX frequency is required.
-;;
-;;On the bladeRF2, there is one oscillator for all RX channels and one
-;;oscillator for all TX channels. Therefore, changing one channel will
-;;change the frequency of all channels in that direction.
-
 (defun set-frequency (device channel frequency)
-  (let ((status (bladerf_set_frequency (mem-ref device :pointer) channel  frequency)))
+  (let ((status (bladerf_set_frequency (mem-ref device :pointer) channel frequency)))
     (if (< status 0)
 	(error "Failed to set channel ~S frequency to ~S Hz error: ~S" channel frequency status)
 	t)))
 
-
 (defcfun ("bladerf_get_frequency" bladerf_get_frequency) :int
   (dev :pointer)
   (ch :int)
-  (frequency (:pointer :uint64)))
+  (frequency :pointer))
 
-;;Get channel's current frequency in Hz
 (defun get-frequency (device channel)
-  (with-foreign-object (frequency '(:pointer :uint64))
+  (with-foreign-object (frequency :uint64)
     (let ((status (bladerf_get_frequency (mem-ref device :pointer) channel frequency)))
       (if (< status 0)
-	  (error "Failled to get channel: ~S frequency error: ~S" channel status)
-	  (mem-aref frequency :uint64)))))
+	  (error "Failed to get channel: ~S frequency error: ~S" channel status)
+	  (mem-ref frequency :uint64)))))
 
 (defcfun ("bladerf_get_frequency_range" bladerf_get_frequency_range) :int
   (dev :pointer)
   (ch :int)
-  (range (:pointer (:struct bladerf_range))))
+  (range :pointer))
 
-;;Get the supported range of frequencies for a channel
 (defun get-frequency-range (device channel)
-  (with-foreign-object (range '(:pointer (:struct bladerf_range)))
+  (with-foreign-object (range :pointer)
     (let ((status (bladerf_get_frequency_range (mem-ref device :pointer) channel range)))
       (if (< status 0)
 	  (error "Failed to get supported range of frequencies for channel ~S error: ~S" channel status)
-	  (mem-aref (mem-ref range :pointer) '(:struct bladerf_range))))))
+	  (mem-ref (mem-ref range :pointer) '(:struct bladerf_range))))))
 
+;; Loopback
 (defcenum bladerf_loopback
   (:BLADERF_LB_NONE #.0)
   :BLADERF_LB_FIRMWARE
@@ -640,36 +595,29 @@
 
 (defcfun ("bladerf_get_loopback_modes" bladerf_get_loopback_modes) :int
   (dev :pointer)
-  (modes (:pointer (:struct bladerf_loopback_modes))))
+  (modes :pointer))
 
-;;Get loopback modes
 (defun get-loopback-modes (device)
-  (with-foreign-object (modes '(:pointer (:struct bladerf_loopback_modes)))
+  (with-foreign-object (modes :pointer)
     (let ((number-of-modes (bladerf_get_loopback_modes (mem-ref device :pointer) modes)))
       (if (< number-of-modes 0)
 	  (error "Failed to get loopback modes error: ~S" number-of-modes)
 	  (if (> number-of-modes 0)
 	      (loop for i from 0 to (1- number-of-modes)
 		 collecting
-		   (mem-aref (mem-ref modes :pointer) '(:struct bladerf_loopback_modes) i)))))))
+		   (mem-ref (mem-aref (mem-ref modes :pointer) :pointer i) '(:struct bladerf_loopback_modes))))))))
 
-(defcfun ("bladerf_is_loopback_mode_supported" bladerf_is_loopback_mode_supported) :bool
+(defcfun ("bladerf_is_loopback_mode_supported" bladerf_is_loopback_mode_supported) :boolean
   (dev :pointer)
   (mode bladerf_loopback))
 
-;;Test if a given loopback mode is supported on this device.
 (defun is-loopback-mode-supported-p (device mode)
   (bladerf_is_loopback_mode_supported (mem-ref device :pointer) mode))
-
 
 (defcfun ("bladerf_set_loopback" bladerf_set_loopback) :int
   (dev :pointer)
   (lb bladerf_loopback))
 
-;;Apply specified loopback mode
-;;Loopback modes should only be enabled or disabled while the RX and TX
-;;channels are both disabled (and therefore, when no samples are being
-;;actively streamed). Otherwise, unexpected behavior may occur.
 (defun set-loopback (device loopback)
   (let ((status (bladerf_set_loopback (mem-ref device :pointer) loopback)))
     (if (< status 0)
@@ -678,16 +626,16 @@
 
 (defcfun ("bladerf_get_loopback" bladerf_get_loopback) :int
   (dev :pointer)
-  (lb (:pointer bladerf_loopback)))
+  (lb :pointer))
 
-;;Get current loopback mode
 (defun get-loopback (device)
-  (with-foreign-object (lb '(:pointer bladerf_loopback))
+  (with-foreign-object (lb 'bladerf_loopback)
     (let ((status (bladerf_get_loopback (mem-ref device :pointer) lb)))
       (if (< status 0)
 	  (error "Failed to get current loopback mode error: ~S" status)
-	  (mem-aref lb 'bladerf_loopback)))))
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; TODO implement trigers
+	  (mem-ref lb 'bladerf_loopback)))))
+
+;; Triggers
 (defcenum bladerf_trigger_role
   (:BLADERF_TRIGGER_ROLE_INVALID #.-1)
   :BLADERF_TRIGGER_ROLE_DISABLED
@@ -712,7 +660,7 @@
   (channel :int)
   (role bladerf_trigger_role)
   (signal bladerf_trigger_signal)
-  (options :pointer))
+  (options :uint64))
 
 (defcfun ("bladerf_trigger_init" bladerf_trigger_init) :int
   (dev :pointer)
@@ -723,9 +671,9 @@
 (defcfun ("bladerf_trigger_arm" bladerf_trigger_arm) :int
   (dev :pointer)
   (trigger :pointer)
-  (arm :pointer)
-  (resv1 :pointer)
-  (resv2 :pointer))
+  (arm :boolean)
+  (resv1 :uint64)
+  (resv2 :uint64))
 
 (defcfun ("bladerf_trigger_fire" bladerf_trigger_fire) :int
   (dev :pointer)
@@ -739,8 +687,8 @@
   (fire_requested :pointer)
   (resv1 :pointer)
   (resv2 :pointer))
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; END TODO Trigers
 
+;; RX Mux
 (defcenum bladerf_rx_mux
   (:BLADERF_RX_MUX_INVALID #.-1)
   (:BLADERF_RX_MUX_BASEBAND #.#x0)
@@ -752,7 +700,6 @@
   (dev :pointer)
   (mux bladerf_rx_mux))
 
-;;Set the current RX Mux mode
 (defun set-rx-mux (device mux)
   (let ((status (bladerf_set_rx_mux (mem-ref device :pointer) mux)))
     (if (< status 0)
@@ -761,36 +708,41 @@
 
 (defcfun ("bladerf_get_rx_mux" bladerf_get_rx_mux) :int
   (dev :pointer)
-  (mode (:pointer bladerf_rx_mux)))
+  (mode :pointer))
 
-;;Get the current RX Mux mode
 (defun get-rx-mux (device)
-  (with-foreign-object (mode '(:pointer bladerf_rx_mux))
+  (with-foreign-object (mode 'bladerf_rx_mux)
     (let ((status (bladerf_get_rx_mux (mem-ref device :pointer) mode)))
       (if (< status 0)
 	  (error "Failed to get current RX Mux mode error: ~S" status)
-	  (mem-aref mode 'bladerf_rx_mux)))))
+	  (mem-ref mode 'bladerf_rx_mux)))))
+
+;; Scheduled tuning
+(defconstant BLADERF_RETUNE_NOW 0)
 
 (defcstruct bladerf_quick_tune
+  ;; Union of bladeRF1 and bladeRF2 parameters
+  ;; For bladeRF1:
   (freqsel :uint8)
   (vcocap :uint8)
   (nint :uint16)
   (nfrac :uint32)
   (flags :uint8)
-  (tbd :pointer))
+  (xb_gpio :uint8)
+  ;; The following are actually for bladeRF2 and overlay the same memory:
+  ;; (nios_profile :uint16)
+  ;; (rffe_profile :uint8) 
+  ;; (port :uint8)
+  ;; (spdt :uint8)
+  )
 
 (defcfun ("bladerf_schedule_retune" bladerf_schedule_retune) :int
   (dev :pointer)
   (ch :int)
   (timestamp :uint64)
   (frequency :uint64)
-  (quick_tune (:pointer (:struct bladerf_quick_tune))))
+  (quick_tune :pointer))
 
-;;Schedule a frequency retune to occur at specified sample timestamp value.
-;; sync-config must have been called with the
-;; BLADERF_FORMAT_SC16_Q11_META format for the associated channel in
-;; order to enable timestamps. (The timestamped metadata format must be
-;; enabled in order to use this function.)
 (defun schedule-retune (device channel timestamp frequency quick-tune)
   (let ((status (bladerf_schedule_retune (mem-ref device :pointer) channel timestamp frequency quick-tune)))
     (if (< status 0)
@@ -801,7 +753,6 @@
   (dev :pointer)
   (ch :int))
 
-;;Cancel all pending scheduled retune operations for the specified channel.
 (defun cancel-scheduled-retunes (device channel)
   (let ((status (bladerf_cancel_scheduled_retunes (mem-ref device :pointer) channel)))
     (if (< status 0)
@@ -811,17 +762,16 @@
 (defcfun ("bladerf_get_quick_tune" bladerf_get_quick_tune) :int
   (dev :pointer)
   (ch :int)
-  (quick_tune (:pointer (:struct bladerf_quick_tune))))
-;;Fetch parameters used to tune the transceiver to the current frequency for
-;; use with bladerf_schedule_retune() to perform a "quick retune."
+  (quick_tune :pointer))
 
 (defun get-quick-tune (device channel)
-  (with-foreign-object (quick-tune '(:pointer (:struct bladerf_quick_tune)))
+  (with-foreign-object (quick-tune '(:struct bladerf_quick_tune))
     (let ((status (bladerf_get_quick_tune (mem-ref device :pointer) channel quick-tune)))
       (if (< status 0)
 	  (error "Failed to fetch quick tune parameters error: ~S" status)
-	  (mem-aref quick-tune '(:struct bladerf_quick_tune))))))
+	  quick-tune))))
 
+;; Correction
 (defcenum bladerf_correction
   :BLADERF_CORR_DCOFF_I
   :BLADERF_CORR_DCOFF_Q
@@ -832,8 +782,8 @@
   (dev :pointer)
   (ch :int)
   (corr bladerf_correction)
-  (value :uint16))
-;;Set the value of the specified configuration parameter
+  (value :int16))
+
 (defun set-correction (device channel correction value)
   (let ((status (bladerf_set_correction (mem-ref device :pointer) channel correction value)))
     (if (< status 0)
@@ -844,22 +794,16 @@
   (dev :pointer)
   (ch :int)
   (corr bladerf_correction)
-  (value (:pointer :uint16)))
+  (value :pointer))
 
-;;Obtain the current value of the specified configuration parameter
 (defun get-correction (device channel correction)
-  (with-foreign-object (value '(:pointer :uint16))
-    (let ((status (bladerf_get_correction device channel correction value)))
+  (with-foreign-object (value :int16)
+    (let ((status (bladerf_get_correction (mem-ref device :pointer) channel correction value)))
       (if (< status 0)
 	  (error "Failed to obtain current value for configuration parameter: ~S error: ~S" correction status)
-	  (mem-aref value :uint16)))))
+	  (mem-ref value :int16)))))
 
-(defun minimum-buffer-size (number-of-samples number-of-channels)
-  (* 2 number-of-samples number-of-channels (foreign-type-size :int16)))
-
-(defun buffer-length (number-of-samples number-of-channels)
-  (* 2 number-of-samples number-of-channels))
-
+;; Streaming format
 (defcenum bladerf_format
   :BLADERF_FORMAT_SC16_Q11
   :BLADERF_FORMAT_SC16_Q11_META
@@ -867,19 +811,17 @@
   :BLADERF_FORMAT_SC8_Q7
   :BLADERF_FORMAT_SC8_Q7_META)
 
+;; Metadata flags
 (defconstant BLADERF_META_STATUS_OVERRUN (ash 1 0))
-
 (defconstant BLADERF_META_STATUS_UNDERRUN (ash 1 1))
-
 (defconstant BLADERF_META_FLAG_TX_BURST_START (ash 1 0))
-
 (defconstant BLADERF_META_FLAG_TX_BURST_END (ash 1 1))
-
 (defconstant BLADERF_META_FLAG_TX_NOW (ash 1 2))
-
 (defconstant BLADERF_META_FLAG_TX_UPDATE_TIMESTAMP (ash 1 3))
-
 (defconstant BLADERF_META_FLAG_RX_NOW (ash 1 31))
+(defconstant BLADERF_META_FLAG_RX_HW_UNDERFLOW (ash 1 0))
+(defconstant BLADERF_META_FLAG_RX_HW_MINIEXP1 (ash 1 16))
+(defconstant BLADERF_META_FLAG_RX_HW_MINIEXP2 (ash 1 17))
 
 (defcstruct bladerf_metadata
   (timestamp :uint64)
@@ -894,34 +836,28 @@
   (buffer_size :unsigned-int)
   (samples :pointer))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; TODO Test this function
-;;Interleaves contiguous blocks of samples in preparation for MIMO TX
 (defun interleave-stream-buffer (layout format buffer-size samples)
   (let ((status (bladerf_interleave_stream_buffer layout format buffer-size samples)))
     (if (< status 0)
 	(error "Failed to interleave samples error: ~S" status)
 	(= status 0))))
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defcfun ("bladerf_deinterleave_stream_buffer" bladerf_deinterleave_stream_buffer) :int
   (layout bladerf_channel_layout)
   (format bladerf_format)
   (buffer_size :unsigned-int)
   (samples :pointer))
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;TODO test function
-;; Deinterleaves samples into contiguous blocks after MIMO RX.
+
 (defun deinterleave-stream-buffer (layout format buffer-size samples)
   (let ((status (bladerf_deinterleave_stream_buffer layout format buffer-size samples)))
     (if (< status 0)
-	(error "Failed to interleave samples error: ~S" status)
+	(error "Failed to deinterleave samples error: ~S" status)
 	(= status 0))))
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defcfun ("bladerf_enable_module" bladerf_enable_module) :int
   (dev :pointer)
   (ch :int)
-  (enable :bool))
-
-;;Enable or disable the RF front end of the specified direction.
+  (enable :boolean))
 
 (defun enable-module (device channel enable)
   (let ((status (bladerf_enable_module (mem-ref device :pointer) channel enable)))
@@ -932,16 +868,14 @@
 (defcfun ("bladerf_get_timestamp" bladerf_get_timestamp) :int
   (dev :pointer)
   (dir bladerf_direction)
-  (timestamp (:pointer :uint64)))
-;; Retrieve the specified stream's current timestamp counter value from the
-;; FPGA.
+  (timestamp :pointer))
 
 (defun get-timestamp (device direction)
-  (with-foreign-object (timestamp '(:pointer :uint64))
+  (with-foreign-object (timestamp :uint64)
     (let ((status (bladerf_get_timestamp (mem-ref device :pointer) direction timestamp)))
       (if (< status 0)
 	  (error "Failed to get timestamp error: ~S" status)
-	  (mem-aref timestamp :uint64)))))
+	  (mem-ref timestamp :uint64)))))
 
 (defcfun ("bladerf_sync_config" bladerf_sync_config) :int
   (dev :pointer)
@@ -952,7 +886,6 @@
   (num_transfers :unsigned-int)
   (stream_timeout :unsigned-int))
 
-;;(Re)Configure a device for synchronous transmission or reception
 (defun sync-config (device layout format num-buffers buffer-size num-transfers stream-timeout)
   (let ((status (bladerf_sync_config (mem-ref device :pointer) layout format num-buffers buffer-size num-transfers stream-timeout)))
     (if (< status 0)
@@ -961,12 +894,11 @@
 
 (defcfun ("bladerf_sync_tx" bladerf_sync_tx) :int
   (dev :pointer)
-  (samples (:pointer :void))
+  (samples :pointer)
   (num_samples :unsigned-int)
-  (metadata (:pointer (:struct bladerf_metadata)))
+  (metadata :pointer)
   (timeout_ms :unsigned-int))
 
-;; Transmit IQ samples.
 (defun sync-tx (device samples num-samples metadata timeout-ms)
   (let ((status (bladerf_sync_tx (mem-ref device :pointer) samples num-samples metadata timeout-ms)))
     (if (< status 0)
@@ -975,70 +907,55 @@
 
 (defcfun ("bladerf_sync_rx" bladerf_sync_rx) :int
   (dev :pointer)
-  (samples (:pointer :void))
+  (samples :pointer)
   (num_samples :unsigned-int)
-  (metadata (:pointer (:struct bladerf_metadata)))
+  (metadata :pointer)
   (timeout_ms :unsigned-int))
-
-;;Receive IQ samples.
-;; Under the hood, this call starts up an underlying asynchronous stream as
-;; needed. This stream can be stopped by disabling the RX channel. (See
-;; bladerf_enable_module for more details.)
-;;
-;; @pre A bladerf_sync_config() call has been to configure the device for
-;;      synchronous data transfer.
-;;
-;; @note A call to bladerf_enable_module() should be made before attempting to
-;;       receive samples. Failing to do this may result in timeouts and other
-;;       errors.
 
 (defun sync-rx (device number-of-samples timeout-ms)
   (let ((samples-to-allocate (* number-of-samples 2)))
-    (with-foreign-objects ((rx-samples :uint16 samples-to-allocate)
-			   (metadata :pointer))
+    (with-foreign-objects ((rx-samples :int16 samples-to-allocate)
+			   (metadata '(:struct bladerf_metadata)))
       (let ((status (bladerf_sync_rx (mem-ref device :pointer) rx-samples number-of-samples metadata timeout-ms))
-	    (samples-array (make-array samples-to-allocate :element-type '(complex float) :initial-element (complex 0.0 0.0) :fill-pointer 0)))
+	    (samples-array (make-array number-of-samples :element-type '(complex float))))
 	(if (< status 0)
-	    (error "Failed to recieve IQ samples error: ~S" status)
+	    (error "Failed to receive IQ samples error: ~S" status)
 	    (progn
-	      (loop for i below samples-to-allocate by 2
-		 do
-		   (vector-push
-		    (complex
-		     (mem-aref rx-samples :int16 (1+ i))
-		     (mem-aref rx-samples :int16 i))
-		    samples-array))
+	      (loop for i from 0 below number-of-samples
+		 do (setf (aref samples-array i)
+			  (complex
+			   (mem-aref rx-samples :int16 (* i 2))
+			   (mem-aref rx-samples :int16 (1+ (* i 2))))))
 	      samples-array))))))
-
-
 
 (defun sync-rx-complex-double-float (device number-of-samples timeout-ms)
   (let ((samples-to-allocate (* number-of-samples 2)))
-    (with-foreign-objects ((rx-samples :uint16 samples-to-allocate)
-			   (metadata :pointer))
+    (with-foreign-objects ((rx-samples :int16 samples-to-allocate)
+			   (metadata '(:struct bladerf_metadata)))
       (let ((status (bladerf_sync_rx (mem-ref device :pointer) rx-samples number-of-samples metadata timeout-ms))
-	    (samples-array (make-array samples-to-allocate :element-type '(complex double-float))))
+	    (samples-array (make-array number-of-samples :element-type '(complex double-float))))
 	(if (< status 0)
-	    (error "Failed to recieve IQ samples error: ~S" status)
+	    (error "Failed to receive IQ samples error: ~S" status)
 	    (progn
-	      (loop for i below samples-to-allocate by 2
-		 do
-		   (vector-push
-		    (complex
-		     (coerce (mem-aref rx-samples :int16 (1+ i)) 'double-float)
-		     (coerce (mem-aref rx-samples :int16 i) 'double-float))
-		    samples-array))
+	      (loop for i from 0 below number-of-samples
+		 do (setf (aref samples-array i)
+			  (complex
+			   (coerce (mem-aref rx-samples :int16 (* i 2)) 'double-float)
+			   (coerce (mem-aref rx-samples :int16 (1+ (* i 2))) 'double-float))))
 	      samples-array))))))
+
+;; Asynchronous streaming 
+(defcstruct bladerf_stream)
 
 (defcfun ("bladerf_init_stream" bladerf_init_stream) :int
   (stream :pointer)
   (dev :pointer)
   (callback :pointer)
   (buffers :pointer)
-  (num_buffers :pointer)
+  (num_buffers :uint)
   (format bladerf_format)
-  (samples_per_buffer :pointer)
-  (num_transfers :pointer)
+  (samples_per_buffer :uint)
+  (num_transfers :uint)
   (user_data :pointer))
 
 (defcfun ("bladerf_stream" bladerf_stream) :int
@@ -1067,6 +984,7 @@
   (dir bladerf_direction)
   (timeout :pointer))
 
+;; Firmware and FPGA loading
 (defcfun ("bladerf_flash_firmware" bladerf_flash_firmware) :int
   (dev :pointer)
   (firmware :string))
@@ -1098,26 +1016,28 @@
 (defcfun ("bladerf_load_fw_from_bootloader" bladerf_load_fw_from_bootloader) :int
   (device_identifier :string)
   (backend bladerf_backend)
-  (bus :pointer)
-  (addr :pointer)
+  (bus :uint8)
+  (addr :uint8)
   (file :string))
 
+;; Flash image types
 (defcenum bladerf_image_type
 	(:BLADERF_IMAGE_TYPE_INVALID #.-1)
 	:BLADERF_IMAGE_TYPE_RAW
 	:BLADERF_IMAGE_TYPE_FIRMWARE
 	:BLADERF_IMAGE_TYPE_FPGA_40KLE
 	:BLADERF_IMAGE_TYPE_FPGA_115KLE
+	(:BLADERF_IMAGE_TYPE_FPGA_A4 #.6)
+	(:BLADERF_IMAGE_TYPE_FPGA_A9 #.7)
 	:BLADERF_IMAGE_TYPE_CALIBRATION
 	:BLADERF_IMAGE_TYPE_RX_DC_CAL
 	:BLADERF_IMAGE_TYPE_TX_DC_CAL
 	:BLADERF_IMAGE_TYPE_RX_IQ_CAL
-	:BLADERF_IMAGE_TYPE_TX_IQ_CAL)
+	:BLADERF_IMAGE_TYPE_TX_IQ_CAL
+	(:BLADERF_IMAGE_TYPE_FPGA_A5 #.13))
 
 (defconstant BLADERF_IMAGE_MAGIC_LEN 7)
-
 (defconstant BLADERF_IMAGE_CHECKSUM_LEN 32)
-
 (defconstant BLADERF_IMAGE_RESERVED_LEN 128)
 
 (defcstruct bladerf_image
@@ -1133,18 +1053,21 @@
   (data :pointer))
 
 (defcfun ("bladerf_alloc_image" bladerf_alloc_image) :pointer
+  (dev :pointer)
   (type bladerf_image_type)
-  (address :pointer)
-  (length :pointer))
+  (address :uint32)
+  (length :uint32))
 
 (defcfun ("bladerf_alloc_cal_image" bladerf_alloc_cal_image) :pointer
+  (dev :pointer)
   (fpga_size bladerf_fpga_size)
-  (vctcxo_trim :pointer))
+  (vctcxo_trim :uint16))
 
 (defcfun ("bladerf_free_image" bladerf_free_image) :void
   (image :pointer))
 
 (defcfun ("bladerf_image_write" bladerf_image_write) :int
+  (dev :pointer)
   (image :pointer)
   (file :string))
 
@@ -1152,6 +1075,7 @@
   (image :pointer)
   (file :string))
 
+;; VCTCXO Tamer
 (defcenum bladerf_vctcxo_tamer_mode
 	(:BLADERF_VCTCXO_TAMER_INVALID #.-1)
 	(:BLADERF_VCTCXO_TAMER_DISABLED #.0)
@@ -1172,12 +1096,13 @@
 
 (defcfun ("bladerf_trim_dac_write" bladerf_trim_dac_write) :int
   (dev :pointer)
-  (val :pointer))
+  (val :uint16))
 
 (defcfun ("bladerf_trim_dac_read" bladerf_trim_dac_read) :int
   (dev :pointer)
   (val :pointer))
 
+;; Tuning mode
 (defcenum bladerf_tuning_mode
 	(:BLADERF_TUNING_MODE_INVALID #.-1)
 	:BLADERF_TUNING_MODE_HOST
@@ -1191,6 +1116,12 @@
   (dev :pointer)
   (mode :pointer))
 
+;; Trigger control
+(defconstant BLADERF_TRIGGER_REG_ARM (ash 1 0))
+(defconstant BLADERF_TRIGGER_REG_FIRE (ash 1 1))
+(defconstant BLADERF_TRIGGER_REG_MASTER (ash 1 2))
+(defconstant BLADERF_TRIGGER_REG_LINE (ash 1 3))
+
 (defcfun ("bladerf_read_trigger" bladerf_read_trigger) :int
   (dev :pointer)
   (ch :int)
@@ -1201,33 +1132,75 @@
   (dev :pointer)
   (ch :int)
   (signal bladerf_trigger_signal)
-  (val :pointer))
+  (val :uint8))
 
+;; Wishbone Master
+(defcfun ("bladerf_wishbone_master_read" bladerf_wishbone_master_read) :int
+  (dev :pointer)
+  (addr :uint32)
+  (data :pointer))
+
+(defcfun ("bladerf_wishbone_master_write" bladerf_wishbone_master_write) :int
+  (dev :pointer)
+  (addr :uint32)
+  (val :uint32))
+
+;; Config GPIO
 (defcfun ("bladerf_config_gpio_read" bladerf_config_gpio_read) :int
   (dev :pointer)
   (val :pointer))
 
 (defcfun ("bladerf_config_gpio_write" bladerf_config_gpio_write) :int
   (dev :pointer)
-  (val :pointer))
+  (val :uint32))
 
+;; SPI Flash
 (defcfun ("bladerf_erase_flash" bladerf_erase_flash) :int
   (dev :pointer)
-  (erase_block :pointer)
-  (count :pointer))
+  (erase_block :uint32)
+  (count :uint32))
+
+(defcfun ("bladerf_erase_flash_bytes" bladerf_erase_flash_bytes) :int
+  (dev :pointer)
+  (address :uint32)
+  (length :uint32))
 
 (defcfun ("bladerf_read_flash" bladerf_read_flash) :int
   (dev :pointer)
   (buf :pointer)
-  (page :pointer)
-  (count :pointer))
+  (page :uint32)
+  (count :uint32))
+
+(defcfun ("bladerf_read_flash_bytes" bladerf_read_flash_bytes) :int
+  (dev :pointer)
+  (buf :pointer)
+  (address :uint32)
+  (bytes :uint32))
 
 (defcfun ("bladerf_write_flash" bladerf_write_flash) :int
   (dev :pointer)
   (buf :pointer)
-  (page :pointer)
-  (count :pointer))
+  (page :uint32)
+  (count :uint32))
 
+(defcfun ("bladerf_write_flash_bytes" bladerf_write_flash_bytes) :int
+  (dev :pointer)
+  (buf :pointer)
+  (address :uint32)
+  (length :uint32))
+
+(defcfun ("bladerf_lock_otp" bladerf_lock_otp) :int
+  (dev :pointer))
+
+(defcfun ("bladerf_read_otp" bladerf_read_otp) :int
+  (dev :pointer)
+  (buf :pointer))
+
+(defcfun ("bladerf_write_otp" bladerf_write_otp) :int
+  (dev :pointer)
+  (buf :pointer))
+
+;; RF Ports
 (defcfun ("bladerf_set_rf_port" bladerf_set_rf_port) :int
   (dev :pointer)
   (ch :int)
@@ -1244,6 +1217,21 @@
   (ports :pointer)
   (count :unsigned-int))
 
+;; Features
+(defcenum bladerf_feature
+  (:BLADERF_FEATURE_DEFAULT #.0)
+  :BLADERF_FEATURE_OVERSAMPLE)
+
+(defcfun ("bladerf_enable_feature" bladerf_enable_feature) :int
+  (dev :pointer)
+  (feature bladerf_feature)
+  (enable :boolean))
+
+(defcfun ("bladerf_get_feature" bladerf_get_feature) :int
+  (dev :pointer)
+  (feature :pointer))
+
+;; Expansion boards
 (defcenum bladerf_xb
 	(:BLADERF_XB_NONE #.0)
 	:BLADERF_XB_100
@@ -1258,6 +1246,7 @@
   (dev :pointer)
   (xb :pointer))
 
+;; Logging
 (defcenum bladerf_log_level
 	:BLADERF_LOG_LEVEL_VERBOSE
 	:BLADERF_LOG_LEVEL_DEBUG
@@ -1270,43 +1259,36 @@
 (defcfun ("bladerf_log_set_verbosity" bladerf_log_set_verbosity) :void
   (level bladerf_log_level))
 
+;; Library version
+(defcfun ("bladerf_version" bladerf_version) :void
+  (version :pointer))
+
+;; Error codes
 (defconstant BLADERF_ERR_UNEXPECTED -1)
-
 (defconstant BLADERF_ERR_RANGE -2)
-
 (defconstant BLADERF_ERR_INVAL -3)
-
 (defconstant BLADERF_ERR_MEM -4)
-
 (defconstant BLADERF_ERR_IO -5)
-
 (defconstant BLADERF_ERR_TIMEOUT -6)
-
 (defconstant BLADERF_ERR_NODEV -7)
-
 (defconstant BLADERF_ERR_UNSUPPORTED -8)
-
 (defconstant BLADERF_ERR_MISALIGNED -9)
-
 (defconstant BLADERF_ERR_CHECKSUM -10)
-
 (defconstant BLADERF_ERR_NO_FILE -11)
-
 (defconstant BLADERF_ERR_UPDATE_FPGA -12)
-
 (defconstant BLADERF_ERR_UPDATE_FW -13)
-
 (defconstant BLADERF_ERR_TIME_PAST -14)
-
 (defconstant BLADERF_ERR_QUEUE_FULL -15)
-
 (defconstant BLADERF_ERR_FPGA_OP -16)
-
 (defconstant BLADERF_ERR_PERMISSION -17)
-
 (defconstant BLADERF_ERR_WOULD_BLOCK -18)
-
 (defconstant BLADERF_ERR_NOT_INIT -19)
 
 (defcfun ("bladerf_strerror" bladerf_strerror) :string
   (error :int))
+
+;; Helper functions
+(defun minimum-buffer-size (number-of-samples number-of-channels)
+  (* 2 number-of-samples number-of-channels (foreign-type-size :int16)))
+
+(defun buffer-length (number-of-samples number-of-channels)
